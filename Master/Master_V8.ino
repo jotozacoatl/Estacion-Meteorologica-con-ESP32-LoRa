@@ -14,12 +14,12 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 // Definición de pines para el bus SPI del módulo LoRa
-#define SCK_PIN     18
-#define MISO_PIN    19
-#define MOSI_PIN    23
-#define SS_PIN      5
-#define RST_PIN     14
-#define DIO0_PIN    26
+#define SCK_PIN    18
+#define MISO_PIN   19
+#define MOSI_PIN   23
+#define SS_PIN     5
+#define RST_PIN    14
+#define DIO0_PIN   26
 
 // Definición de pines para los LEDs indicadores de estado
 #define LED_VERDE    25  
@@ -39,7 +39,7 @@ const char* password_ap = "12345678Password";
 // Credenciales de redes Wi-Fi externas para los modos de conexión
 const char* ssid1 = "El Cuartico";
 const char* pass1 = "cC577EXT";
-const char* ssid_hotspot = "WolFi de Perro";
+const char* ssid_hotspot = "WiFi de Perro";
 const char* pass_hotspot = "28158650";
 
 // URL y parámetros para el envío de datos a la plataforma ThingSpeak
@@ -58,6 +58,7 @@ WebServer server(80);
 struct NodoEsclavo {
   String temp = "0";
   String hum = "0";
+  String luz = "0";
   int rssi = 0;
   unsigned long ultimaRecepcion = 0;
 };
@@ -79,7 +80,7 @@ unsigned long lastDebounceTime = 0;
 const unsigned long debounceDelay = 50;
 unsigned long lastOledUpdate = 0;
 
-// Página HTML almacenada en la memoria flash (PROGMEM) que carga chart.js de forma local desde el ESP32
+// Página HTML almacenada en PROGMEM que carga chart.js localmente y permite descargar CSV
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -94,10 +95,12 @@ const char index_html[] PROGMEM = R"rawliteral(
     .container{display:flex;flex-wrap:wrap;justify-content:center;gap:15px;}
     .card{background:white;padding:15px;border-radius:12px;box-shadow:0 4px 10px rgba(0,0,0,0.1);width:360px;box-sizing:border-box;}
     h2{color:#444;border-bottom:2px solid #eee;padding-bottom:5px;font-size:18px;}
-    .dato{font-size:15px;margin:6px 0;color:#007bff;} .rssi{color:#6c757d;font-size:12px;}
+    .dato{font-size:13px;margin:4px 0;color:#007bff;} .rssi{color:#6c757d;font-size:12px;}
     .status{display:inline-block;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:bold;color:white;}
     .online{background:#28a745;} .offline{background:#dc3545;}
-    .chart-container{position:relative;margin-top:10px;height:190px;}
+    .chart-container{position:relative;margin-top:10px;height:180px;}
+    .btn-csv{background:#007bff;color:white;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin-top:10px;transition:0.2s;}
+    .btn-csv:hover{background:#0056b3;}
   </style>
 </head>
 <body>
@@ -105,24 +108,24 @@ const char index_html[] PROGMEM = R"rawliteral(
   <div class='container'>
     <div class='card'><h2>Nodo Esclavo 1</h2>
       <span id='status1' class='status offline'>Desconectado</span>
-      <div class='dato'>��️ Temp: <b id='t1'>0</b> °C</div>
-      <div class='dato'>�� Humedad: <b id='h1'>0</b> %</div>
+      <div class='dato'>🌡️ Temp: <b id='t1'>0</b>°C | 💧 Hum: <b id='h1'>0</b>% | ☀️ Luz: <b id='l1'>0</b>%</div>
       <p id='rssi1' class='rssi'>Señal RSSI: 0 dBm</p>
       <div class='chart-container'><canvas id='chart1'></canvas></div>
+      <button class='btn-csv' onclick='exportarCSV(1)'>📥 Descargar CSV Nodo 1</button>
     </div>
     <div class='card'><h2>Nodo Esclavo 2</h2>
       <span id='status2' class='status offline'>Desconectado</span>
-      <div class='dato'>��️ Temp: <b id='t2'>0</b> °C</div>
-      <div class='dato'>�� Humedad: <b id='h2'>0</b> %</div>
+      <div class='dato'>🌡️ Temp: <b id='t2'>0</b>°C | 💧 Hum: <b id='h2'>0</b>% | ☀️ Luz: <b id='l2'>0</b>%</div>
       <p id='rssi2' class='rssi'>Señal RSSI: 0 dBm</p>
       <div class='chart-container'><canvas id='chart2'></canvas></div>
+      <button class='btn-csv' onclick='exportarCSV(2)'>📥 Descargar CSV Nodo 2</button>
     </div>
     <div class='card'><h2>Nodo Esclavo 3</h2>
       <span id='status3' class='status offline'>Desconectado</span>
-      <div class='dato'>��️ Temp: <b id='t3'>0</b> °C</div>
-      <div class='dato'>�� Humedad: <b id='h3'>0</b> %</div>
+      <div class='dato'>🌡️ Temp: <b id='t3'>0</b>°C | 💧 Hum: <b id='h3'>0</b>% | ☀️ Luz: <b id='l3'>0</b>%</div>
       <p id='rssi3' class='rssi'>Señal RSSI: 0 dBm</p>
       <div class='chart-container'><canvas id='chart3'></canvas></div>
+      <button class='btn-csv' onclick='exportarCSV(3)'>📥 Descargar CSV Nodo 3</button>
     </div>
   </div>
   <script>
@@ -133,8 +136,9 @@ const char index_html[] PROGMEM = R"rawliteral(
         data: {
           labels: [],
           datasets: [
-            { label: 'Temp (°C)', data: [], borderColor: '#ff6384', backgroundColor: 'rgba(255,99,132,0.1)', tension: 0.3, fill: true },
-            { label: 'Hum (%)', data: [], borderColor: '#36a2eb', backgroundColor: 'rgba(54,162,235,0.1)', tension: 0.3, fill: true }
+            { label: 'Temp (°C)', data: [], borderColor: '#ff6384', tension: 0.3 },
+            { label: 'Hum (%)', data: [], borderColor: '#36a2eb', tension: 0.3 },
+            { label: 'Luz (%)', data: [], borderColor: '#ffc107', tension: 0.3 }
           ]
         },
         options: { 
@@ -145,18 +149,22 @@ const char index_html[] PROGMEM = R"rawliteral(
       });
     }
 
-    const chart1 = crearGrafica('chart1');
-    const chart2 = crearGrafica('chart2');
-    const chart3 = crearGrafica('chart3');
+    const charts = {
+      1: crearGrafica('chart1'),
+      2: crearGrafica('chart2'),
+      3: crearGrafica('chart3')
+    };
 
-    function actualizarGrafica(chart, time, temp, hum) {
+    function actualizarGrafica(chart, time, t, h, l) {
       chart.data.labels.push(time);
-      chart.data.datasets[0].data.push(temp);
-      chart.data.datasets[1].data.push(hum);
-      if(chart.data.labels.length > 10) {
+      chart.data.datasets[0].data.push(t);
+      chart.data.datasets[1].data.push(h);
+      chart.data.datasets[2].data.push(l);
+      if(chart.data.labels.length > 20) {
         chart.data.labels.shift();
         chart.data.datasets[0].data.shift();
         chart.data.datasets[1].data.shift();
+        chart.data.datasets[2].data.shift();
       }
       chart.update();
     }
@@ -167,24 +175,51 @@ const char index_html[] PROGMEM = R"rawliteral(
         function procesar(obj, id, chart) {
           document.getElementById('t' + id).innerText = obj.temp;
           document.getElementById('h' + id).innerText = obj.hum;
+          document.getElementById('l' + id).innerText = obj.luz;
           document.getElementById('rssi' + id).innerText = 'Señal RSSI: ' + obj.rssi + ' dBm';
           let st = document.getElementById('status' + id);
           st.className = 'status ' + (obj.activo ? 'online' : 'offline');
           st.innerText = obj.activo ? 'En Línea' : 'Desconectado';
-          actualizarGrafica(chart, hora, parseFloat(obj.temp), parseFloat(obj.hum));
+          actualizarGrafica(chart, hora, parseFloat(obj.temp), parseFloat(obj.hum), parseFloat(obj.luz));
         }
-        procesar(d.e1, 1, chart1);
-        procesar(d.e2, 2, chart2);
-        procesar(d.e3, 3, chart3);
+        procesar(d.e1, 1, charts[1]);
+        procesar(d.e2, 2, charts[2]);
+        procesar(d.e3, 3, charts[3]);
       }).catch(err => console.log(err));
     }
     setInterval(actualizarDatos, 2000);
+
+    function exportarCSV(nodoId) {
+      const chart = charts[nodoId];
+      const labels = chart.data.labels;
+      const temps = chart.data.datasets[0].data;
+      const hums = chart.data.datasets[1].data;
+      const luces = chart.data.datasets[2].data;
+
+      if(labels.length === 0) {
+        alert("No hay datos suficientes para exportar.");
+        return;
+      }
+
+      let csvContent = "data:text/csv;charset=utf-8,Hora,Temperatura (C),Humedad (%),Luz (%)\n";
+
+      for (let i = 0; i < labels.length; i++) {
+        csvContent += `${labels[i]},${temps[i]},${hums[i]},${luces[i]}\n`;
+      }
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `lecturas_nodo_${nodoId}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   </script>
 </body>
 </html>
 )rawliteral";
 
-// Función para conectar el ESP32 a una red Wi-Fi externa en modo Estación (STA)
 void conectarWifiExterno() {
   WiFi.mode(WIFI_STA);
   Serial.print("Conectando a Hotspot: "); Serial.println(ssid_hotspot);
@@ -196,7 +231,6 @@ void conectarWifiExterno() {
   Serial.print("IP asignada: "); Serial.println(WiFi.localIP());
 }
 
-// Función para intentar la conexión multired secuencialmente con respaldo
 void conectarMultired() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid1, pass1);
@@ -211,7 +245,6 @@ void conectarMultired() {
   }
 }
 
-// Función para cambiar de forma cíclica entre los modos de operación del sistema
 void cambiarSiguienteModo() {
   display.clearDisplay();
   display.setCursor(0, 15);
@@ -247,14 +280,13 @@ void cambiarSiguienteModo() {
   delay(1500);
 }
 
-// Función para actualizar los contenidos mostrados en la pantalla OLED según el menú activo
 void actualizarPantalla() {
   display.clearDisplay();
   display.setCursor(0, 0);
   display.setTextColor(SSD1306_WHITE);
   display.println("--- MENU MASTER ---");
   display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
-  display.setCursor(0, 15);
+  display.setCursor(0, 12);
 
   unsigned long ahora = millis();
   bool e1C = (esclavos[0].ultimaRecepcion != 0) && (ahora - esclavos[0].ultimaRecepcion < TIMEOUT_CONEXION);
@@ -270,17 +302,17 @@ void actualizarPantalla() {
       break;
     case 1:
       display.println("> 2. DETALLE NODO 1 <");
-      if (e1C) { display.printf("Temp: %s C\nHum: %s %%\nRSSI: %d dBm", esclavos[0].temp.c_str(), esclavos[0].hum.c_str(), esclavos[0].rssi); }
+      if (e1C) { display.printf("T:%sC H:%s%%\nL:%s%% RSSI:%ddBm", esclavos[0].temp.c_str(), esclavos[0].hum.c_str(), esclavos[0].luz.c_str(), esclavos[0].rssi); }
       else { display.println("\n ** DESCONECTADO **"); }
       break;
     case 2:
       display.println("> 3. DETALLE NODO 2 <");
-      if (e2C) { display.printf("Temp: %s C\nHum: %s %%\nRSSI: %d dBm", esclavos[1].temp.c_str(), esclavos[1].hum.c_str(), esclavos[1].rssi); }
+      if (e2C) { display.printf("T:%sC H:%s%%\nL:%s%% RSSI:%ddBm", esclavos[1].temp.c_str(), esclavos[1].hum.c_str(), esclavos[1].luz.c_str(), esclavos[1].rssi); }
       else { display.println("\n ** DESCONECTADO **"); }
       break;
     case 3:
       display.println("> 4. DETALLE NODO 3 <");
-      if (e3C) { display.printf("Temp: %s C\nHum: %s %%\nRSSI: %d dBm", esclavos[2].temp.c_str(), esclavos[2].hum.c_str(), esclavos[2].rssi); }
+      if (e3C) { display.printf("T:%sC H:%s%%\nL:%s%% RSSI:%ddBm", esclavos[2].temp.c_str(), esclavos[2].hum.c_str(), esclavos[2].luz.c_str(), esclavos[2].rssi); }
       else { display.println("\n ** DESCONECTADO **"); }
       break;
     case 4:
@@ -294,13 +326,12 @@ void actualizarPantalla() {
       if (modoActual == MODO_AP_LOCAL) { display.println("Actual: AP LOCAL"); }
       else if (modoActual == MODO_WIFI_EXTERNO) { display.println("Actual: WIFI EXTERNO"); }
       else { display.println("Actual: THINGSPEAK"); }
-      display.println("\n[Sel] Cambiar Modo");
+      display.println("[Sel] Cambiar Modo");
       break;
   }
   display.display();
 }
 
-// Función para gestionar la lectura de los pulsadores físicos con lógica de antirrebote
 void handleNavegacion() {
   bool readUp = digitalRead(PIN_BTN_UP);
   bool readDown = digitalRead(PIN_BTN_DOWN);
@@ -332,7 +363,6 @@ void handleNavegacion() {
   lastStateSelect = readSelect;
 }
 
-// Configuración inicial del sistema, periféricos, radio LoRa y servidor web
 void setup() {
   Serial.begin(115200);
 
@@ -353,7 +383,6 @@ void setup() {
   Wire.begin(21, 22);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
-  // Inicializar el sistema de archivos LittleFS
   if(!LittleFS.begin(true)){
     Serial.println("Error al montar LittleFS");
   }
@@ -366,12 +395,10 @@ void setup() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid_ap, password_ap);
 
-  // Enlace de la ruta principal del servidor web con la página HTML estática
   server.on("/", []() { 
     server.send_P(200, "text/html", index_html); 
   });
 
-  // Enlace de la ruta para servir el archivo chart.js directamente desde la memoria LittleFS del ESP32
   server.on("/chart.js", []() {
     File file = LittleFS.open("/chart.js", "r");
     if (!file) {
@@ -382,7 +409,6 @@ void setup() {
     file.close();
   });
 
-  // Enlace de la ruta para suministrar los datos estructurados en formato JSON a la interfaz web
   server.on("/datos-json", []() {
     unsigned long ahora = millis();
     String json = "{";
@@ -390,6 +416,7 @@ void setup() {
       bool activo = (esclavos[i].ultimaRecepcion != 0) && (ahora - esclavos[i].ultimaRecepcion < TIMEOUT_CONEXION);
       json += "\"e" + String(i+1) + "\":{\"temp\":" + esclavos[i].temp + 
               ",\"hum\":" + esclavos[i].hum + 
+              ",\"luz\":" + esclavos[i].luz + 
               ",\"rssi\":" + String(esclavos[i].rssi) + 
               ",\"activo\":" + (activo ? "true" : "false") + "}";
       if(i < 2) json += ",";
@@ -402,7 +429,6 @@ void setup() {
   actualizarPantalla();
 }
 
-// Bucle principal del programa para gestión de peticiones, radiofrecuencia y lógica general
 void loop() {
   if (modoActual != MODO_THINGSPEAK) {
     server.handleClient();
@@ -421,35 +447,32 @@ void loop() {
     int posId = paquete.indexOf("\"id\":");
     int posTemp = paquete.indexOf("\"temp\":");
     int posHum = paquete.indexOf("\"hum\":");
+    int posLuz = paquete.indexOf("\"luz\":");
     int posFin = paquete.indexOf("}");
 
-    if (posTemp != -1 && posHum != -1) {
+    if (posTemp != -1 && posHum != -1 && posLuz != -1) {
       int idNodo = (posId != -1) ? paquete.substring(posId + 5, paquete.indexOf(',', posId)).toInt() : 1;
       
-      int inicioTemp = posTemp + 7;
-      int finTemp = paquete.indexOf(',', inicioTemp);
-      String tStr = paquete.substring(inicioTemp, finTemp);
-
-      int inicioHum = posHum + 6;
-      int finHum = posFin;
-      String hStr = paquete.substring(inicioHum, finHum);
+      String tStr = paquete.substring(posTemp + 7, paquete.indexOf(',', posTemp));
+      String hStr = paquete.substring(posHum + 6, paquete.indexOf(',', posHum));
+      String lStr = paquete.substring(posLuz + 6, posFin);
 
       if (idNodo >= 1 && idNodo <= TOTAL_NODOS) {
         int idx = idNodo - 1;
         esclavos[idx].temp = tStr;
         esclavos[idx].hum = hStr;
+        esclavos[idx].luz = lStr;
         esclavos[idx].rssi = rssi;
         esclavos[idx].ultimaRecepcion = millis();
       }
 
       Serial.println("--------------------------------------------------");
       Serial.printf("[LoRa] Paquete recibido de Nodo %d\n", idNodo);
-      Serial.printf("[LoRa] Temperatura: %s °C | Humedad: %s %% | RSSI: %d dBm\n", tStr.c_str(), hStr.c_str(), rssi);
+      Serial.printf("[LoRa] Temp: %s C | Hum: %s %% | Luz: %s %% | RSSI: %d dBm\n", tStr.c_str(), hStr.c_str(), lStr.c_str(), rssi);
       Serial.println("--------------------------------------------------");
 
       float t = tStr.toFloat();
-      float h = hStr.toFloat();
-      if ((t == 0.0 && h == 0.0) || t < -10.0 || t > 50.0) {
+      if (t == 0.0 || t < -10.0 || t > 50.0) {
         digitalWrite(LED_ROJO, HIGH);
       } else {
         digitalWrite(LED_ROJO, LOW);
@@ -457,7 +480,6 @@ void loop() {
     }
   }
 
-  // Lógica para el envío automático de telemetría a la plataforma ThingSpeak según el intervalo configurado
   if (modoActual == MODO_THINGSPEAK && (millis() - lastThingSpeakTime >= thingSpeakDelay)) {
     if (WiFi.status() == WL_CONNECTED) {
       WiFiClient client;
