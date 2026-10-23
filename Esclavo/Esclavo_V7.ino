@@ -2,12 +2,16 @@
 #include <LoRa.h>
 #include <DHT.h>
 
-const int NODO_ID = 1; // Cambiar a 2 para el Nodo 2 y a 3 para el Nodo 3
+// CAMBIAR ESTE ID SEGÚN EL NODO: 1, 2 o 3
+const int NODO_ID = 1; 
 
 // Configuración del sensor DHT11
 #define DHTPIN 4     
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
+
+// Pin analógico para el sensor fotosensible (LDR - sirve tanto para módulos de 3 o 4 pines usando AO)
+#define PIN_LDR 34
 
 // Pines LoRa-02
 #define SCK_PIN   18
@@ -27,7 +31,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  // Configuración de pines de LEDs
+  pinMode(PIN_LDR, INPUT);
   pinMode(LED_AZUL, OUTPUT);
   pinMode(LED_VERDE, OUTPUT);
   pinMode(LED_AMARILLO, OUTPUT);
@@ -38,10 +42,8 @@ void setup() {
   digitalWrite(LED_AMARILLO, LOW);
   digitalWrite(LED_ROJO, LOW);
 
-  // Inicializar sensor DHT11
   dht.begin();
 
-  // Inicializar bus SPI para LoRa
   SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, SS_PIN);
   LoRa.setPins(SS_PIN, RST_PIN, DIO0_PIN);
 
@@ -49,46 +51,43 @@ void setup() {
     Serial.println("¡Error al iniciar LoRa!");
     while (1);
   }
-  LoRa.enableCrc(); // Habilitar verificación de redundancia cíclica
-  
-  Serial.println("Nodo esclavo inicializado correctamente.");
+  LoRa.enableCrc();
+  Serial.printf("Nodo esclavo %d inicializado (DHT11 + LDR).\n", NODO_ID);
 }
 
 void loop() {
-  // Leer temperatura y humedad del DHT11
+  // Lectura DHT11
   float h = dht.readHumidity();
   float t = dht.readTemperature(); 
 
-  // Verificar si las lecturas del sensor son válidas
+  // Lectura LDR mapeada de 1 a 100
+  int valorCrudo = analogRead(PIN_LDR);
+  int luz = map(valorCrudo, 0, 4095, 1, 100);
+  luz = constrain(luz, 1, 100);
+
   if (isnan(h) || isnan(t)) {
     Serial.println("Error al leer datos del sensor DHT11!");
     digitalWrite(LED_AMARILLO, HIGH); 
     digitalWrite(LED_VERDE, LOW);
-    digitalWrite(LED_ROJO, HIGH);   
+    digitalWrite(LED_ROJO, HIGH);    
     t = 0.0;
     h = 0.0;
   } else {
     digitalWrite(LED_AMARILLO, LOW);
     digitalWrite(LED_VERDE, HIGH);   
-
-    if ((t == 0.0 && h == 0.0) || t < -10.0 || t > 50.0) {
-      digitalWrite(LED_ROJO, HIGH);  
-    } else {
-      digitalWrite(LED_ROJO, LOW);   
-    }
+    digitalWrite(LED_ROJO, LOW);
   }
 
-  // Construir el paquete JSON estándar (solo id, temp y hum)
+  // Construir trama JSON enviando Temperatura, Humedad y Luz
   String payload = "{\"id\": " + String(NODO_ID) + 
                    ", \"temp\": " + String(t, 1) + 
-                   ", \"hum\": " + String(h, 1) + "}";
+                   ", \"hum\": " + String(h, 1) + 
+                   ", \"luz\": " + String(luz) + "}";
 
-  // Enviar por LoRa
   LoRa.beginPacket();
   LoRa.print(payload);
   LoRa.endPacket();
 
-  // Parpadeo del LED Azul indicando transmisión RF
   digitalWrite(LED_AZUL, HIGH);
   delay(100);
   digitalWrite(LED_AZUL, LOW);
@@ -96,5 +95,5 @@ void loop() {
   Serial.print("Trama RF transmitida -> ");
   Serial.println(payload);
 
-  delay(5000); // Intervalo de muestreo de 5 segundos
+  delay(5000);
 }
